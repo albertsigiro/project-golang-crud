@@ -1,0 +1,13 @@
+# Folder
+/.idea
+/.vscode
+/.debug
+/conf
+/vendor
+/temp_folder
+swagger.zip
+/conf/config.env
+go.sum
+/step_1
+/step_2
+/pull-request-template.md
