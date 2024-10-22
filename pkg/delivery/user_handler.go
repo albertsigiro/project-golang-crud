@@ -113,7 +113,7 @@ func (h *UserHandler) Register(c echo.Context) error {
         }
         
         return c.JSON(http.StatusBadRequest, domains.Response{
-            Message: "Data already exist",
+            Message: "Validation Errors",
             Errors: validationErrors,
             Code: http.StatusBadRequest,
         })
