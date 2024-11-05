@@ -1,3 +1,4 @@
+// cmd/main.go
 package main
 
 import (
@@ -8,7 +9,7 @@ import (
     "auth-user-api/services"
     "auth-user-api/models"
     "auth-user-api/utils"
-    "auth-user-api/middleware"  // Tambahkan ini
+    "auth-user-api/middleware"
 
     "github.com/labstack/echo/v4"
     echoMiddleware "github.com/labstack/echo/v4/middleware"
@@ -30,7 +31,7 @@ func main() {
         log.Fatalf("Failed to create extension: %v", err)
     }
 
-    err = db.AutoMigrate(&models.User{})
+    err = db.AutoMigrate(&models.User{}, &models.Book{}, &models.Author{}, &models.Publisher{}, &models.LoanRequest{}, &models.LoanRecord{})
     if err != nil {
         log.Fatalf("Failed to migrate database: %v", err)
     }
@@ -39,6 +40,23 @@ func main() {
     userRepo := repository.NewUserRepository(db)
     userService := services.NewUserService(userRepo)
     userController := controllers.NewUserController(userService)
+
+    bookRepo := repository.NewBookRepository(db)
+    authorRepo := repository.NewAuthorRepository(db)
+    publisherRepo := repository.NewPublisherRepository(db)
+
+    bookService := services.NewBookService(bookRepo)
+    authorService := services.NewAuthorService(authorRepo)
+    publisherService := services.NewPublisherService(publisherRepo)
+
+    bookController := controllers.NewBookController(bookService, authorService, publisherService)
+    authorController := controllers.NewAuthorController(authorService)
+    publisherController := controllers.NewPublisherController(publisherService)
+
+    // Inisialisasi Loan Repository, Service, dan Controller
+    loanRepo := repository.NewLoanRepository(db)
+    loanService := services.NewLoanService(loanRepo) // LoanService needs access to Book and User repositories
+    loanController := controllers.NewLoanController(loanService)
 
     // Inisialisasi Echo
     e := echo.New()
@@ -50,16 +68,53 @@ func main() {
     // Validator
     e.Validator = utils.NewValidator()
 
+    // JWT Middleware
+    jwtMiddleware := middleware.NewJWTMiddleware(userService)
+
     // Routes
+    // User Routes
+    e.POST("/register", userController.RegisterUser)
+    e.POST("/login", userController.LoginUser)
+
+    // Protected User Routes
     e.POST("/register", userController.RegisterUser)
     e.POST("/login", userController.LoginUser)
     e.GET("/users", userController.GetAllUsers)
     e.PUT("/update/:id", userController.UpdateUser)
     e.DELETE("/delete", userController.DeleteUser)
     
-    jwtMiddleware := middleware.NewJWTMiddleware(userService)
+    // Book Routes
+    e.POST("/books", bookController.CreateBook)
+    e.GET("/books/:id", bookController.GetBookByID)
+    e.GET("/books", bookController.GetAllBooks)
+    e.PUT("/books/:id", bookController.UpdateBook)
+    e.DELETE("/books/:id", bookController.DeleteBook)
 
-    // Rute dengan middleware JWT
+    // Author Routes
+    e.POST("/authors", authorController.CreateAuthor)
+    e.GET("/authors/:id", authorController.GetAuthorByID)
+    e.GET("/authors", authorController.GetAllAuthors)
+    e.PUT("/authors/:id", authorController.UpdateAuthor)
+    e.DELETE("/authors/:id", authorController.DeleteAuthor)
+
+    // Publisher Routes
+    e.POST("/publishers", publisherController.CreatePublisher)
+    e.GET("/publishers/:id", publisherController.GetPublisherByID)
+    e.GET("/publishers", publisherController.GetAllPublishers)
+    e.PUT("/publishers/:id", publisherController.UpdatePublisher)
+    e.DELETE("/publishers/:id", publisherController.DeletePublisher)
+
+    // Loan Routes
+    loanGroup := e.Group("/loans", jwtMiddleware.JWTMiddleware)
+    loanGroup.POST("/request", loanController.CreateLoanRequest)
+    loanGroup.PUT("/cancel/:id", loanController.CancelLoanRequest)           
+    loanGroup.PUT("/approve/:id", loanController.ApproveLoanRequest)       
+    loanGroup.PUT("/return/:id", loanController.ReturnBook)                
+    e.GET("/loan-requests", loanController.GetAllLoanRequests)
+    e.GET("/loan-records", loanController.GetAllLoanRecords)
+    e.GET("/loans/search/:username", loanController.SearchLoansByUsername)
+
+    // Protected Hello Route Example
     e.GET("/protected/hello", userController.HelloProtected, jwtMiddleware.JWTMiddleware)
 
     // Start Server

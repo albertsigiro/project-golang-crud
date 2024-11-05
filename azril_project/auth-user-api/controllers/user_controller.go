@@ -26,6 +26,7 @@ func (c *UserController) RegisterUser(ctx echo.Context) error {
         Email     string `json:"email" validate:"required,email"`
         Password1 string `json:"password_1" validate:"required"`
         Password2 string `json:"password_2" validate:"required"`
+        Role      int    `json:"role" validate:"required,oneof=1 2"` // 1 for admin, 2 for member
     }
 
     var req RegisterRequest
@@ -38,37 +39,11 @@ func (c *UserController) RegisterUser(ctx echo.Context) error {
         return ctx.JSON(http.StatusBadRequest, response)
     }
 
-    if req.Username == "" {
+    // Perform additional validation if necessary
+    if req.Role != 1 && req.Role != 2 {
         response := domains.BaseResponse{
             Code:    "400",
-            Message: "Username cannot be empty. Field: username",
-            Error:   "Validation error",
-        }
-        return ctx.JSON(http.StatusBadRequest, response)
-    }
-
-    if req.Email == "" {
-        response := domains.BaseResponse{
-            Code:    "400",
-            Message: "Email cannot be empty. Field: email",
-            Error:   "Validation error",
-        }
-        return ctx.JSON(http.StatusBadRequest, response)
-    }
-
-    if req.Password1 == "" {
-        response := domains.BaseResponse{
-            Code:    "400",
-            Message: "Password 1 cannot be empty. Field: password_1",
-            Error:   "Validation error",
-        }
-        return ctx.JSON(http.StatusBadRequest, response)
-    }
-
-    if req.Password2 == "" {
-        response := domains.BaseResponse{
-            Code:    "400",
-            Message: "Password 2 cannot be empty. Field: password_2",
+            Message: "Role must be 1 (admin) or 2 (member)",
             Error:   "Validation error",
         }
         return ctx.JSON(http.StatusBadRequest, response)
@@ -83,7 +58,8 @@ func (c *UserController) RegisterUser(ctx echo.Context) error {
         return ctx.JSON(http.StatusBadRequest, response)
     }
 
-    if err := c.service.Register(req.Username, req.Email, req.Password1, req.Password2); err != nil {
+    // Register the user with the role
+    if err := c.service.Register(req.Username, req.Email, req.Password1, req.Password2, req.Role); err != nil {
         response := domains.BaseResponse{
             Code:    "400",
             Message: "Registration failed. Error: " + err.Error(),
@@ -93,22 +69,27 @@ func (c *UserController) RegisterUser(ctx echo.Context) error {
     }
 
     userResponse := domains.RegisterResponse{
-        Username:  req.Username,
-        Email:     req.Email,
-        Password1: req.Password1,
-        Password2: req.Password2,
+        Username: req.Username,
+        Email:    req.Email,
+        Role:     "", // Temporary empty, will assign below
     }
-
+    
+    if req.Role == 1 {
+        userResponse.Role = "admin"
+    } else if req.Role == 2 {
+        userResponse.Role = "member"
+    }
+    
     response := domains.BaseResponse{
         Code:      "200",
         Message:   "User successfully registered",
         Data:      userResponse,
-        Parameter: "username", 
-    }    
+        Parameter: "username",
+    }
     return ctx.JSON(http.StatusOK, response)
 }
 
-// Get All Users godoc
+// GetAllUsers retrieves all users with roles in string format (admin/member)
 func (c *UserController) GetAllUsers(ctx echo.Context) error {
     users, err := c.service.GetAllUsers()
     if err != nil {
@@ -120,10 +101,27 @@ func (c *UserController) GetAllUsers(ctx echo.Context) error {
         return ctx.JSON(http.StatusInternalServerError, response)
     }
 
+    // Map to UserResponse with role as a string
+    var userResponses []domains.UserResponse
+    for _, user := range users {
+        role := "member" // default to member
+        if user.Role == 1 {
+            role = "admin"
+        }
+        
+        userResponse := domains.UserResponse{
+            UserID:   user.ID,
+            Username: user.Username,
+            Email:    user.Email,
+            Role:     role,
+        }
+        userResponses = append(userResponses, userResponse)
+    }
+
     response := domains.BaseResponse{
         Code:    "200",
         Message: "Users retrieved successfully",
-        Data:    users,
+        Data:    userResponses,
     }
     return ctx.JSON(http.StatusOK, response)
 }
@@ -258,6 +256,7 @@ var jwtKey = []byte("my_secret_key")  // Pastikan menggunakan secret key yang sa
 
 type JWTClaims struct {
     Username string `json:"username"`
+    Role     int    `json:"role"`
     jwt.RegisteredClaims
 }
 
@@ -270,98 +269,78 @@ func (c *UserController) LoginUser(ctx echo.Context) error {
 
     var req LoginRequest
     if err := ctx.Bind(&req); err != nil {
-        response := domains.BaseResponse{
+        return ctx.JSON(http.StatusBadRequest, domains.BaseResponse{
             Code:    "400",
             Message: "Invalid input",
-            Error:  err.Error(),
-        }
-        return ctx.JSON(http.StatusBadRequest, response)
+            Error:   err.Error(),
+        })
     }
 
     if err := ctx.Validate(req); err != nil {
-        response := domains.BaseResponse{
+        return ctx.JSON(http.StatusBadRequest, domains.BaseResponse{
             Code:    "400",
             Message: "Validation error",
-            Error:  err.Error(),
-        }
-        return ctx.JSON(http.StatusBadRequest, response)
+            Error:   err.Error(),
+        })
     }
 
-    // Authenticate the user
-    err := c.service.Authenticate(req.Username, req.Password)
+    user, err := c.service.Authenticate(req.Username, req.Password)
     if err != nil {
-        if err.Error() == "user not found" {
-            response := domains.BaseResponse{
-                Code:    "404",
-                Message: "User not found.",
-                Error:   "UserNotFoundError",
-            }
-            return ctx.JSON(http.StatusNotFound, response)
-        } else if err.Error() == "invalid username or password" {
-            response := domains.BaseResponse{
-                Code:    "401",
-                Message: "Invalid username or password",
-                Error:   "AuthenticationError",
-            }
-            return ctx.JSON(http.StatusUnauthorized, response)
-        }
+        return ctx.JSON(http.StatusUnauthorized, domains.BaseResponse{
+            Code:    "401",
+            Message: "Invalid username or password",
+            Error:   "AuthenticationError",
+        })
+    }
     
-        response := domains.BaseResponse{
-            Code:    "500",
-            Message: "Internal server error",
-            Error:   err.Error(),
-        }
-        return ctx.JSON(http.StatusInternalServerError, response)
-    }    
-
-    // Membuat token JWT dengan durasi 24 jam
     expirationTime := time.Now().Add(24 * time.Hour)
     claims := &JWTClaims{
-        Username: req.Username,
+        Username: user.Username,
+        Role:     user.Role, // Ambil role dari user yang berhasil diotentikasi
         RegisteredClaims: jwt.RegisteredClaims{
             ExpiresAt: jwt.NewNumericDate(expirationTime),
         },
     }
-
+    
     token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
     tokenString, err := token.SignedString(jwtKey)
     if err != nil {
-        response := domains.BaseResponse{
+        return ctx.JSON(http.StatusInternalServerError, domains.BaseResponse{
             Code:    "500",
             Message: "Failed to generate token",
-            Error:  err.Error(),
-        }
-        return ctx.JSON(http.StatusInternalServerError, response)
+            Error:   err.Error(),
+        })
     }
-
-    response := domains.BaseResponse{
+    
+    return ctx.JSON(http.StatusOK, domains.BaseResponse{
         Code:    "200",
         Message: "Successful login",
         Data: map[string]interface{}{
             "token": tokenString,
         },
-        Error: "",
-    }
-    
-    // Panggil helper function untuk memformat error jika kosong
-    response.FormatError()
-    
-    return ctx.JSON(http.StatusOK, response)
-}
+    })
+}    
 
 // Route yang diproteksi
 func (c *UserController) HelloProtected(ctx echo.Context) error {
-    username := ctx.Get("username")
-    if username == nil {
-        response := map[string]string{
-            "Message": "Unauthorized access. Missing or invalid token.",
-        }
-        return ctx.JSON(http.StatusUnauthorized, response)
+    username := ctx.Get("username").(string)
+    role := ctx.Get("role").(int) // Ambil role dari context
+
+    // Izinkan akses untuk role 1 (admin) dan role 2 (member)
+    if role == 1 {
+        return ctx.JSON(http.StatusOK, map[string]string{
+            "Message": "Hello, admin! You have accessed a protected route!",
+            "User":    username,
+        })
+    } else if role == 2 {
+        return ctx.JSON(http.StatusOK, map[string]string{
+            "Message": "Hello, member! You have accessed a protected route!",
+            "User":    username,
+        })
     }
 
-    response := map[string]string{
-        "Message": "Hello, you have accessed a protected route!",
-    }
-
-    return ctx.JSON(http.StatusOK, response)
+    // Jika role tidak 1 atau 2, tolak akses
+    return ctx.JSON(http.StatusForbidden, map[string]string{
+        "Message": "Access denied",
+    })
 }

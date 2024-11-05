@@ -1,3 +1,5 @@
+// services/user_services.go
+
 package services
 
 import (
@@ -10,13 +12,13 @@ import (
 )
 
 type UserService interface {
-    Register(username, email, password1, password2 string) error
+    Register(username, email, password1, password2 string, role int) error
     Update(id, username, email, password1, password2 string) error
     Delete(id string) error
-    Authenticate(username, password string) error
+    Authenticate(username, password string) (*models.User, error)
     GetAllUsers() ([]*models.User, error)
     GetUserByID(id string) (*models.User, error)
-    GetUserByUsername(username string) (*models.User, error)  // Tambahkan ini untuk mengambil user berdasarkan username
+    GetUserByUsername(username string) (*models.User, error)
 }
 
 type userService struct {
@@ -28,17 +30,15 @@ func NewUserService(repo repository.UserRepository) UserService {
 }
 
 // Register - Untuk mendaftarkan user baru
-func (s *userService) Register(username, email, password1, password2 string) error {
+func (s *userService) Register(username, email, password1, password2 string, role int) error {
     if password1 != password2 {
         return errors.New("password didn't match")
     }
 
-    // Validasi format password
     if err := utils.ValidatePassword(password1); err != nil {
         return err
     }
 
-    // Hash password sebelum menyimpan
     hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password1), bcrypt.DefaultCost)
     if err != nil {
         return err
@@ -47,10 +47,10 @@ func (s *userService) Register(username, email, password1, password2 string) err
     user := &models.User{
         Username: username,
         Email:    email,
-        Password: string(hashedPassword), // Simpan password yang sudah di-hash
+        Password: string(hashedPassword),
+        Role:     role, // Set the role here
     }
 
-    // Simpan user baru ke database
     return s.repo.CreateUser(user)
 }
 
@@ -108,26 +108,24 @@ func (s *userService) Delete(id string) error {
 }
 
 // Authenticate - Autentikasi user berdasarkan username dan password
-func (s *userService) Authenticate(username, password string) error {
-    user, err := s.repo.GetUserByUsername(username) // Ambil user berdasarkan username
+func (s *userService) Authenticate(username, password string) (*models.User, error) {
+    user, err := s.repo.GetUserByUsername(username)
     if err != nil {
         if err.Error() == "record not found" {
-            return errors.New("user not found")
+            return nil, errors.New("user not found")
         }
-        return err
+        return nil, err
     }
 
-    // Periksa apakah user sudah dihapus
     if user.DeletedAt.Valid {
-        return errors.New("user not found")
+        return nil, errors.New("user not found")
     }
 
-    // Verifikasi password
     if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password)); err != nil {
-        return errors.New("invalid username or password")
+        return nil, errors.New("invalid username or password")
     }
 
-    return nil
+    return user, nil
 }
 
 // GetUserByID - Mengambil user berdasarkan ID
