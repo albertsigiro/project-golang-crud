@@ -10,20 +10,25 @@ import (
     "net/http"
 )
 
+// Validator untuk role
+func ValidateRole(role int) error {
+    if role != 1 && role != 2 {
+        return errors.New("invalid role: must be 1 (admin) or 2 (member)")
+    }
+    return nil
+}
+
 // CustomValidator adalah implementasi dari echo.Validator
 type CustomValidator struct {
     validator *validator.Validate
 }
 
-// NewValidator mengembalikan instance baru dari CustomValidator
 func NewValidator() *CustomValidator {
     return &CustomValidator{validator: validator.New()}
 }
 
-// Validate melakukan validasi terhadap struct menggunakan go-playground/validator
 func (cv *CustomValidator) Validate(i interface{}) error {
     if err := cv.validator.Struct(i); err != nil {
-        // Mengonversi error validasi ke HTTP Error
         return echo.NewHTTPError(http.StatusBadRequest, err.Error())
     }
     return nil
